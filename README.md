@@ -1,6 +1,4 @@
-# Pangolin Installation - Glue-IT
-
-## Überblick
+# Pangolin Setup - Tailscale + Cloudflare DNS-01
 
 Identity-aware VPN und Reverse Proxy auf Basis von WireGuard. Alternative zu Cloudflare Tunnels mit selbstgehosteter Kontrolle.
 
@@ -13,24 +11,32 @@ Identity-aware VPN und Reverse Proxy auf Basis von WireGuard. Alternative zu Clo
 ```
 ┌─────────────────────────────────────────┐
 │           INTERNET (Public)             │
-│         46.62.129.50 (blockiert)        │
-│              durch UFW                  │
+│                                         │
+│  Traefik-Public: PUBLIC_IP:443          │
+│  (Services für Entwickler)              │
+│  - Holt Config von Pangolin API         │
 └─────────────────────────────────────────┘
                     │
 ┌─────────────────────────────────────────┐
-│           TAILSCALE NETWORK             │
-│         100.108.41.111 (erlaubt)        │
+│         TAILSCALE (Privat)              │
 │                                         │
-│   ┌─────────┐    ┌─────────┐           │
-│   │ Dashboard│    │  Apps   │           │
-│   │ :443    │    │ :443    │           │
-│   │ (Admin) │    │ (Public)│           │
-│   └─────────┘    └─────────┘           │
-│        │              │                 │
-│   ┌─────────────────────────────────┐   │
-│   │      Pangolin + Traefik         │   │
-│   │      (100.108.41.111:443)       │   │
-│   └─────────────────────────────────┘   │
+│  Traefik-Tailscale: TS_IP:443           │
+│  (Dashboard nur für Admins)             │
+│  - Statische Route zu Pangolin          │
+│  - KEIN API-Zugriff                     │
+└─────────────────────────────────────────┘
+                    │
+┌─────────────────────────────────────────┐
+│         DOCKER INTERNAL                 │
+│                                         │
+│  Pangolin:3000-3002                     │
+│  - Dashboard API (3000)                 │
+│  - Internal API (3001)                  │
+│  - Web UI (3002)                        │
+│  - KEINE Ports exposed                  │
+│                                         │
+│  Gerbil:3004                            │
+│  - WireGuard VPN                        │
 └─────────────────────────────────────────┘
 ```
 
@@ -39,44 +45,47 @@ Identity-aware VPN und Reverse Proxy auf Basis von WireGuard. Alternative zu Clo
 | Komponente | Zugriff | Begründung |
 |------------|---------|------------|
 | **Dashboard** | Tailscale only | Admin-Interface nur über VPN |
-| **Apps** | Tailscale / Public* | Selektiv öffentlich machbar |
-| **WireGuard** | Tailscale only | VPN-Tunnel geschützt |
-
-*Apps können später über separate Public-IP oder Cloudflare Tunnel exponiert werden, ohne das Dashboard zu gefährden.
+| **Services** | Public / Tailscale | Selektiv öffentlich machbar |
+| **WireGuard** | Tailscale / Public | VPN-Tunnel |
 
 ---
 
-## Installation
+## Schnellstart
 
-### Voraussetzungen
+### 1. Repository klonen
 
-- Linux Server mit root-Zugriff
-- Docker & Docker Compose
-- Domain (hier: `apps.glue-it.de`)
-- Cloudflare Account mit API Token
-- Tailscale auf dem Server
-
-### DNS-Konfiguration (Cloudflare)
-
-| Type | Name | Target | Proxy |
-|------|------|--------|-------|
-| A | `dashboard.apps` | `100.108.41.111` | 🚫 DNS only (grau) |
-| A | `*.apps` | `100.108.41.111` | 🚫 DNS only (grau) |
-
-**Wichtig:** Proxy muss ausgeschaltet sein für DNS-01 Challenge!
-
-### Cloudflare API Token
-
-1. https://dash.cloudflare.com/profile/api-tokens
-2. "Create Token" → "Custom token"
-3. Berechtigungen:
-   - Zone:Read
-   - DNS:Edit
-4. Zone Resources: Include - Specific zone - `glue-it.de`
-
-Token in `.env` eintragen:
 ```bash
-CF_DNS_API_TOKEN=cfat_...
+git clone https://github.com/gthieleb/pangolin-setup.git
+cd pangolin-setup
+```
+
+### 2. Konfiguration anpassen
+
+```bash
+# .env erstellen
+cp .env.example .env
+# .env editieren und Cloudflare Token eintragen
+
+# docker-compose.yml erstellen
+cp docker-compose.yml.example docker-compose.yml
+# IPs anpassen (Tailscale + Public)
+```
+
+### 3. Pangolin Config erstellen
+
+```bash
+# config/config.yml erstellen
+mkdir -p config/letsencrypt config/traefik-tailscale/logs config/traefik-public/logs
+
+# Server Secret generieren
+openssl rand -hex 32
+# In config/config.yml eintragen
+```
+
+### 4. Starten
+
+```bash
+docker compose up -d
 ```
 
 ---
@@ -85,46 +94,94 @@ CF_DNS_API_TOKEN=cfat_...
 
 ### Dateien
 
-| Datei | Zweck |
-|-------|-------|
-| `docker-compose.yml` | Tailscale-only Betrieb |
-| `docker-compose.public.yml` | Public Access (optional) |
-| `config/config.yml` | Pangolin Konfiguration |
-| `config/traefik/traefik_config.yml` | Traefik + Let's Encrypt |
-| `config/traefik/dynamic_config.yml` | TLS-Optionen |
-| `.env` | Cloudflare Credentials |
+| Datei | Zweck | Quelle |
+|-------|-------|--------|
+| `docker-compose.yml` | Services | Aus `.example` kopieren |
+| `.env` | Secrets | Aus `.example` kopieren |
+| `config/config.yml` | Pangolin | Siehe Dokumentation |
+| `config/traefik-tailscale/` | Traefik Dashboard | Statische Routes |
+| `config/traefik-public/` | Traefik Services | Mit Pangolin API |
+| `config/letsencrypt/` | Zertifikate | Auto-generiert |
 
-### Let's Encrypt DNS-01 Challenge
+### Wichtige Variablen
 
-Traefik ist für Cloudflare DNS-01 konfiguriert:
+In `docker-compose.yml`:
 
 ```yaml
-certificatesResolvers:
-  letsencrypt:
-    acme:
-      dnsChallenge:
-        provider: cloudflare
-      email: "info@thielebein.net"
-      storage: "/letsencrypt/acme.json"
+# Tailscale IP (Dashboard)
+ports:
+  - DEINE_TAILSCALE_IP:443:443
+  - DEINE_TAILSCALE_IP:80:80
+
+# Public IP (Services) - optional
+ports:
+  - DEINE_PUBLIC_IP:443:443
+  - DEINE_PUBLIC_IP:80:80
+```
+
+In `config/config.yml`:
+
+```yaml
+server:
+  base_endpoint: "dashboard.apps.deine-domain.de"
+  
+app:
+  dashboard_url: "https://dashboard.apps.deine-domain.de"
+  base_domain: "apps.deine-domain.de"
+```
+
+---
+
+## DNS-Konfiguration (Cloudflare)
+
+### Tailscale-only (Initial)
+
+| Type | Name | Target | Proxy |
+|------|------|--------|-------|
+| A | `dashboard.apps` | `DEINE_TAILSCALE_IP` | 🚫 DNS only |
+| A | `*.apps` | `DEINE_TAILSCALE_IP` | 🚫 DNS only |
+
+### Public Services (optional)
+
+| Type | Name | Target | Proxy |
+|------|------|--------|-------|
+| A | `service1.apps` | `DEINE_PUBLIC_IP` | 🚫 DNS only |
+| A | `service2.apps` | `DEINE_PUBLIC_IP` | 🚫 DNS only |
+
+**Wichtig:** Proxy muss ausgeschaltet sein für DNS-01 Challenge!
+
+---
+
+## Cloudflare API Token
+
+1. https://dash.cloudflare.com/profile/api-tokens
+2. "Create Token" → "Custom token"
+3. Berechtigungen:
+   - Zone:Read
+   - DNS:Edit
+4. Zone Resources: Include - Specific zone - `deine-domain.de`
+
+In `.env` eintragen:
+```bash
+CF_DNS_API_TOKEN=cfat_...
 ```
 
 ---
 
 ## Betrieb
 
-### Start (Tailscale-only)
+### Start
 
 ```bash
-cd /opt/pangolin
 docker compose up -d
 ```
 
 ### Logs
 
 ```bash
-docker compose logs -f traefik   # Traefik
-docker compose logs -f pangolin  # Pangolin
-docker compose logs -f gerbil    # WireGuard
+docker compose logs -f traefik-tailscale  # Dashboard
+docker compose logs -f traefik-public     # Services
+docker compose logs -f pangolin           # Pangolin
 ```
 
 ### Status
@@ -137,38 +194,11 @@ docker compose ps
 
 ## Erste Einrichtung
 
-1. **Dashboard öffnen:** `https://dashboard.apps.glue-it.de`
+1. **Dashboard öffnen:** `https://dashboard.apps.deine-domain.de`
 2. **Setup Token eingeben** (aus Logs: `docker compose logs pangolin | grep "Token:"`)
 3. **Admin-Account erstellen**
 4. **Organisation einrichten**
 5. **Sites und Resources hinzufügen**
-
----
-
-## Public Access (später)
-
-Wenn Apps für Entwickler öffentlich erreichbar sein sollen:
-
-### Option 1: Public IP
-
-```bash
-# Firewall öffnen
-sudo ufw allow 443/tcp
-sudo ufw allow 80/tcp
-
-# Public Compose verwenden
-docker compose -f docker-compose.public.yml up -d
-```
-
-DNS auf Public IP umstellen:
-| Type | Name | Target |
-|------|------|--------|
-| A | `dashboard.apps` | `46.62.129.50` |
-| A | `*.apps` | `46.62.129.50` |
-
-### Option 2: Cloudflare Tunnel
-
-Dashboard bleibt auf Tailscale, einzelne Apps über Cloudflare Tunnel.
 
 ---
 
@@ -185,16 +215,16 @@ sudo tailscale serve --https=443 off
 
 ```bash
 # Traefik Logs prüfen
-docker compose logs traefik | grep -i "acme\|certificate"
+docker compose logs traefik-tailscale | grep -i "acme\|certificate"
 
 # acme.json prüfen
-cat config/letsencrypt/acme.json | jq
+sudo cat config/letsencrypt/acme.json | python3 -m json.tool
 ```
 
 ### DNS-01 Challenge fehlschlägt
 
 - Cloudflare API Token prüfen
-- DNS-Propagation abwarten (`delayBeforeCheck: 10`)
+- DNS-Propagation abwarten
 - Resolvers: `1.1.1.1:53`, `1.0.0.1:53`
 
 ---
@@ -206,6 +236,7 @@ cat config/letsencrypt/acme.json | jq
 | Dashboard nur Tailscale | ✅ |
 | Let's Encrypt TLS | ✅ |
 | DNS-01 Challenge (kein Port 80 nötig) | ✅ |
+| Pangolin keine exposed Ports | ✅ |
 | UFW Firewall aktiv | ✅ |
 | Cloudflare DNS | ✅ |
 | SSO/OIDC möglich | ⬜ (optional) |
@@ -218,10 +249,3 @@ cat config/letsencrypt/acme.json | jq
 - **Dokumentation:** https://docs.pangolin.net
 - **GitHub:** https://github.com/fosrl/pangolin
 - **Community:** https://discord.gg/pangolin
-
----
-
-## Tailscale IP
-
-- Server: `100.108.41.111`
-- Exit Node: `100.89.128.1/24:51820`
