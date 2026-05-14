@@ -1,0 +1,15 @@
+# Lokale Konfiguration mit Secrets
+docker-compose.yml
+.env
+
+# Generierte Dateien
+config/letsencrypt/acme.json
+*.log
+
+# Docker Volumes
+config/traefik-tailscale/logs/
+config/traefik-public/logs/
+
+# Temporäre Dateien
+*.tmp
+*.swp

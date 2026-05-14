@@ -1,0 +1,100 @@
+name: pangolin
+services:
+  pangolin:
+    image: docker.io/fosrl/pangolin:1.18.4
+    container_name: pangolin
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+    volumes:
+      - ./config:/app/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/"]
+      interval: "10s"
+      timeout: "10s"
+      retries: 15
+    # Keine Ports exposed - nur intern über Docker-Netzwerk
+
+  gerbil:
+    image: docker.io/fosrl/gerbil:1.4.0
+    container_name: gerbil
+    restart: unless-stopped
+    depends_on:
+      pangolin:
+        condition: service_healthy
+    command:
+      - --reachableAt=http://gerbil:3004
+      - --generateAndSaveKeyTo=/var/config/key
+      - --remoteConfig=http://pangolin:3001/api/v1/
+    volumes:
+      - ./config/:/var/config
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    ports:
+      - 51820:51820/udp
+      - 21820:21820/udp
+
+  # Traefik für Tailscale (Dashboard only, KEIN Pangolin API)
+  traefik-tailscale:
+    image: docker.io/traefik:v3.6
+    container_name: traefik-tailscale
+    restart: unless-stopped
+    command:
+      - --configFile=/etc/traefik/traefik_config.yml
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
+      - CF_API_EMAIL=${CF_API_EMAIL:-}
+      - CF_API_KEY=${CF_API_KEY:-}
+    volumes:
+      - ./config/traefik-tailscale:/etc/traefik:ro
+      - ./config/letsencrypt:/letsencrypt
+      - ./config/traefik-tailscale/logs:/var/log/traefik
+    ports:
+      # ANPASSEN: Deine Tailscale IP
+      - DEINE_TAILSCALE_IP:443:443
+      - DEINE_TAILSCALE_IP:443:443/udp
+      - DEINE_TAILSCALE_IP:80:80
+    labels:
+      - "traefik.enable=false"
+
+  # Traefik für Public (Services, MIT Pangolin API)
+  traefik-public:
+    image: docker.io/traefik:v3.6
+    container_name: traefik-public
+    restart: unless-stopped
+    depends_on:
+      pangolin:
+        condition: service_healthy
+    command:
+      - --configFile=/etc/traefik/traefik_config.yml
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
+      - CF_API_EMAIL=${CF_API_EMAIL:-}
+      - CF_API_KEY=${CF_API_KEY:-}
+    volumes:
+      - ./config/traefik-public:/etc/traefik:ro
+      - ./config/letsencrypt:/letsencrypt
+      - ./config/traefik-public/logs:/var/log/traefik
+    ports:
+      # ANPASSEN: Deine Public IP (optional, für public Services)
+      # - DEINE_PUBLIC_IP:443:443
+      # - DEINE_PUBLIC_IP:443:443/udp
+      # - DEINE_PUBLIC_IP:80:80
+    labels:
+      - "traefik.enable=false"
+
+networks:
+  default:
+    driver: bridge
+    name: pangolin
