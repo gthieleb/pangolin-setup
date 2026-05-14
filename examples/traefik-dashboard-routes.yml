@@ -1,0 +1,48 @@
+http:
+  routers:
+    # Dashboard Route - statisch, direkt zu Pangolin
+    dashboard:
+      rule: "Host(`dashboard.apps.deine-domain.de`)"
+      service: pangolin-dashboard
+      tls:
+        certResolver: "letsencrypt"
+      middlewares:
+        - "dashboard-headers"
+
+    # Dashboard API Route
+    dashboard-api:
+      rule: "Host(`dashboard.apps.deine-domain.de`) && PathPrefix(`/api`)"
+      service: pangolin-api
+      tls:
+        certResolver: "letsencrypt"
+      middlewares:
+        - "dashboard-headers"
+
+  services:
+    pangolin-dashboard:
+      loadBalancer:
+        servers:
+          - url: "http://pangolin:3002"
+        healthCheck:
+          path: "/"
+          interval: "10s"
+          timeout: "5s"
+
+    pangolin-api:
+      loadBalancer:
+        servers:
+          - url: "http://pangolin:3000"
+        healthCheck:
+          path: "/api/v1/"
+          interval: "10s"
+          timeout: "5s"
+
+  middlewares:
+    dashboard-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+        customResponseHeaders:
+          X-Frame-Options: "DENY"
+          X-Content-Type-Options: "nosniff"
+          X-XSS-Protection: "1; mode=block"
