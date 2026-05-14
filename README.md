@@ -242,9 +242,58 @@ sudo cat config/letsencrypt/acme.json | python3 -m json.tool
 | SSO/OIDC möglich | ⬜ (optional) |
 | CrowdSec | ⬜ (optional) |
 
----
+## Integration API (OpenAPI MCP)
 
-## Ressourcen
+Pangolin bietet eine REST API zur Automatisierung. Diese kann als MCP Server für Hermes/Claude genutzt werden.
+
+### Aktivierung
+
+In `config/config.yml`:
+```yaml
+flags:
+  enable_integration_api: true
+```
+
+### OpenAPI Spec
+
+Die API Spec wird automatisch generiert und ist verfügbar unter:
+- JSON: `http://pangolin:3003/v1/openapi.json`
+- YAML: `http://pangolin:3003/v1/openapi.yaml`
+- Swagger UI: `http://pangolin:3003/v1/docs`
+
+### MCP Proxy
+
+Ein MCP Proxy konvertiert die OpenAPI Spec in MCP Tools:
+
+```bash
+# MCP Proxy starten
+docker compose -f docker-compose.mcp.yml up -d
+```
+
+### Hermes Agent Konfiguration
+
+In `~/.hermes/config.yaml`:
+```yaml
+mcp_servers:
+  pangolin:
+    command: docker
+    args:
+      - exec
+      - -i
+      - pangolin-mcp
+      - python
+      - /app/mcp-proxy.py
+    env:
+      PANGOLIN_API_KEY: dein-api-key
+```
+
+### API Key erstellen
+
+1. Dashboard öffnen: `https://dashboard.apps.deine-domain.de`
+2. Organisation → API Keys
+3. Neuer Key mit gewünschten Berechtigungen
+
+---
 
 - **Dokumentation:** https://docs.pangolin.net
 - **GitHub:** https://github.com/fosrl/pangolin

@@ -1,0 +1,23 @@
+name: pangolin-mcp
+services:
+  mcp-proxy:
+    image: python:3.12-slim
+    container_name: pangolin-mcp
+    restart: unless-stopped
+    command: >
+      sh -c "pip install mcp httpx pyyaml &&
+             python /app/mcp-proxy.py"
+    volumes:
+      - /opt/pangolin/mcp-proxy.py:/app/mcp-proxy.py:ro
+      - /opt/pangolin/config/openapi.yaml:/opt/pangolin/config/openapi.yaml:ro
+    networks:
+      - pangolin
+    environment:
+      - PANGOLIN_API_KEY=${PANGOLIN_API_KEY:-}
+    stdin_open: true
+    tty: true
+
+networks:
+  pangolin:
+    external: true
+    name: pangolin
